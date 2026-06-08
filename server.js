@@ -1,11 +1,14 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import connectDB from './db.js'; // Не забывай расширение .js при использовании import
+import connectDB from './db.js';
+import {launchBot} from "./bot/telegramBot.js"; // Не забывай расширение .js при использовании import
 
 dotenv.config();
 
 // Запускаем подключение к базе
 connectDB();
+
+launchBot();
 
 const app = express();
 
