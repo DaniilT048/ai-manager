@@ -1,14 +1,14 @@
 import { Telegraf } from 'telegraf';
 import dotenv from 'dotenv';
 import Message from '../models/Message.js';
-import { generateAIResponse } from '../services/aiService.js'; // <-- Импортируем ИИ-сервис
+import { generateAIResponse } from '../services/aiService.js';
 
 dotenv.config();
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
 bot.start((ctx) => {
-    ctx.reply('Привет! Теперь я подключен к базе данных и готов общаться через ИИ. Задавай свои вопросы! 😎');
+    ctx.reply('Привет! Я твой ИИ-менеджер с отличной памятью. Задавай свои вопросы! 😎');
 });
 
 bot.on('text', async (ctx) => {
@@ -17,31 +17,29 @@ bot.on('text', async (ctx) => {
     const userName = ctx.from.first_name || 'Guest';
 
     try {
-        // 1. Сохраняем входящее сообщение от юзера в MongoDB
-        await Message.create({
-            chatId: chatId,
-            userName: userName,
-            text: userMessage,
-            role: 'user'
-        });
-        console.log(`💾 Сообщение от ${userName} сохранено.`);
+        // 1. Сохраняем новое сообщение от юзера в базу
+        await Message.create({ chatId, userName, text: userMessage, role: 'user' });
 
-        // Показываем в телеге статус "печатает...", пока ИИ думает (юзер-экспириенс!)
         await ctx.sendChatAction('typing');
 
-        // 2. Генерируем ответ с помощью OpenAI
-        const aiReply = await generateAIResponse(userMessage);
+        // 2. Достаем из MongoDB последние 15 сообщений чата, чтобы ИИ помнил контекст
+        const rawHistory = await Message.find({ chatId })
+            .sort({ createdAt: -1 }) // Берем самые свежие
+            .limit(15);
 
-        // 3. Сохраняем ответ самого ИИ в MongoDB
-        await Message.create({
-            chatId: chatId,
-            userName: 'AI_Manager',
-            text: aiReply,
-            role: 'assistant' // Важно: тут роль assistant
-        });
-        console.log(`💾 Ответ ИИ сохранен в базу.`);
+        // Переворачиваем массив обратно, чтобы хронология шла от старых к новым
+        const formattedHistory = rawHistory.reverse().map(msg => ({
+            role: msg.role,       // 'user' или 'assistant'
+            content: msg.text     // Текст сообщения
+        }));
 
-        // 4. Отправляем ответ пользователю в Telegram
+        // 3. Передаем всю историю в OpenAI
+        const aiReply = await generateAIResponse(formattedHistory);
+
+        // 4. Сохраняем ответ ИИ в базу
+        await Message.create({ chatId, userName: 'AI_Manager', text: aiReply, role: 'assistant' });
+
+        // 5. Отправляем ответ пользователю в Telegram
         await ctx.reply(aiReply);
 
     } catch (error) {
@@ -52,7 +50,7 @@ bot.on('text', async (ctx) => {
 
 export const launchBot = () => {
     bot.launch()
-        .then(() => console.log('🤖 Telegram-бот успешно запущен и слушает сообщения!'))
+        .then(() => console.log('🤖 Telegram-бот успешно запущен и помнит всё!'))
         .catch((err) => console.error('❌ Ошибка при запуске бота:', err));
 };
 
