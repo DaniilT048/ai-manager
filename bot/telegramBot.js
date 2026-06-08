@@ -1,36 +1,60 @@
 import { Telegraf } from 'telegraf';
 import dotenv from 'dotenv';
+import Message from '../models/Message.js';
+import { generateAIResponse } from '../services/aiService.js'; // <-- Импортируем ИИ-сервис
 
 dotenv.config();
 
-// Проверяем, есть ли токен в .env, чтобы проект не падал молча
-if (!process.env.TELEGRAM_BOT_TOKEN) {
-    console.error('❌ Ошибка: TELEGRAM_BOT_TOKEN не задан в файле .env');
-    process.exit(1);
-}
-
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
-// Реагируем на команду /start
 bot.start((ctx) => {
-    ctx.reply('Альхамдулиллах. Иншала брат, смерть неверным');
+    ctx.reply('Привет! Теперь я подключен к базе данных и готов общаться через ИИ. Задавай свои вопросы! 😎');
 });
 
-// Ловим любое текстовое сообщение (пока работает как эхо)
 bot.on('text', async (ctx) => {
     const userMessage = ctx.message.text;
-    const chatId = ctx.chat.id; // Тот самый уникальный ID, который мы потом сохраним в Mongo
+    const chatId = ctx.chat.id;
+    const userName = ctx.from.first_name || 'Guest';
 
-    ctx.reply(`Ты написал: "${userMessage}" Но ты черт. Мой chatId в этой сессии: ${chatId}`);
+    try {
+        // 1. Сохраняем входящее сообщение от юзера в MongoDB
+        await Message.create({
+            chatId: chatId,
+            userName: userName,
+            text: userMessage,
+            role: 'user'
+        });
+        console.log(`💾 Сообщение от ${userName} сохранено.`);
+
+        // Показываем в телеге статус "печатает...", пока ИИ думает (юзер-экспириенс!)
+        await ctx.sendChatAction('typing');
+
+        // 2. Генерируем ответ с помощью OpenAI
+        const aiReply = await generateAIResponse(userMessage);
+
+        // 3. Сохраняем ответ самого ИИ в MongoDB
+        await Message.create({
+            chatId: chatId,
+            userName: 'AI_Manager',
+            text: aiReply,
+            role: 'assistant' // Важно: тут роль assistant
+        });
+        console.log(`💾 Ответ ИИ сохранен в базу.`);
+
+        // 4. Отправляем ответ пользователю в Telegram
+        await ctx.reply(aiReply);
+
+    } catch (error) {
+        console.error('❌ Ошибка в обработчике текста:', error);
+        ctx.reply('Произошла какая-то ошибка на сервере...');
+    }
 });
 
-// Функция для запуска бота, которую мы вызовем в server.js
 export const launchBot = () => {
     bot.launch()
         .then(() => console.log('🤖 Telegram-бот успешно запущен и слушает сообщения!'))
         .catch((err) => console.error('❌ Ошибка при запуске бота:', err));
 };
 
-// Корректная остановка бота при перезапуске сервера (чтобы соединение не зависало)
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
